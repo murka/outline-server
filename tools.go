@@ -1,4 +1,4 @@
-// Copyright 2018 The Outline Authors
+// Copyright 2024 The Outline Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,18 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Parameters required to identify and authenticate connections to a Shadowsocks server.
-export interface ShadowsocksAccessKey {
-  id: string;
-  port: number;
-  cipher: string;
-  secret: string;
-}
+//go:build tools
+// +build tools
 
-export interface ShadowsocksServer {
-  // Annotates the Prometheus data metrics with ASN.
-  enableAsnMetrics(enable: boolean);
+// See https://github.com/golang/go/wiki/Modules#how-can-i-track-tool-dependencies-for-a-module
+// and https://github.com/go-modules-by-example/index/blob/master/010_tools/README.md
 
-  // Updates the server to accept only the given access keys.
-  update(keys: ShadowsocksAccessKey[]): Promise<void>;
-}
+package tools
+
+import (
+	_ "github.com/Jigsaw-Code/outline-ss-server/cmd/outline-ss-server"
+	_ "github.com/go-task/task/v3/cmd/task"
+)

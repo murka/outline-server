@@ -14,7 +14,7 @@
 
 import {ManualClock} from '../infrastructure/clock';
 import {InMemoryConfig} from '../infrastructure/json_config';
-import {AccessKeyId, DataLimit} from '../model/access_key';
+import {DataLimit} from '../model/access_key';
 import * as version from './version';
 import {AccessKeyConfigJson} from './server_access_key';
 
@@ -23,7 +23,6 @@ import {
   CountryUsage,
   DailyFeatureMetricsReportJson,
   HourlyServerMetricsReportJson,
-  KeyUsage,
   MetricsCollectorClient,
   OutlineSharedMetricsPublisher,
   UsageMetrics,
@@ -37,7 +36,6 @@ describe('OutlineSharedMetricsPublisher', () => {
       const publisher = new OutlineSharedMetricsPublisher(
         new ManualClock(),
         serverConfig,
-        null,
         null,
         null,
         null
@@ -59,7 +57,6 @@ describe('OutlineSharedMetricsPublisher', () => {
         serverConfig,
         null,
         null,
-        null,
         null
       );
       expect(publisher.isSharingEnabled()).toBeTruthy();
@@ -71,23 +68,16 @@ describe('OutlineSharedMetricsPublisher', () => {
       let startTime = clock.nowMs;
       const serverConfig = new InMemoryConfig<ServerConfigJson>({serverId: 'server-id'});
       const usageMetrics = new ManualUsageMetrics();
-      const toMetricsId = (id: AccessKeyId) => `M(${id})`;
       const metricsCollector = new FakeMetricsCollector();
       const publisher = new OutlineSharedMetricsPublisher(
         clock,
         serverConfig,
         null,
         usageMetrics,
-        toMetricsId,
         metricsCollector
       );
 
       publisher.startSharing();
-      usageMetrics.keyUsage = [
-        {accessKeyId: 'user-0', inboundBytes: 11},
-        {accessKeyId: 'user-1', inboundBytes: 22},
-        {accessKeyId: 'user-0', inboundBytes: 33},
-      ];
       usageMetrics.countryUsage = [
         {country: 'AA', inboundBytes: 11},
         {country: 'BB', inboundBytes: 11},
@@ -103,9 +93,6 @@ describe('OutlineSharedMetricsPublisher', () => {
         startUtcMs: startTime,
         endUtcMs: clock.nowMs,
         userReports: [
-          {userId: 'M(user-0)', bytesTransferred: 11},
-          {userId: 'M(user-1)', bytesTransferred: 22},
-          {userId: 'M(user-0)', bytesTransferred: 33},
           {bytesTransferred: 11, countries: ['AA']},
           {bytesTransferred: 11, countries: ['BB']},
           {bytesTransferred: 22, countries: ['CC']},
@@ -115,10 +102,6 @@ describe('OutlineSharedMetricsPublisher', () => {
       });
 
       startTime = clock.nowMs;
-      usageMetrics.keyUsage = [
-        {accessKeyId: 'user-0', inboundBytes: 44},
-        {accessKeyId: 'user-2', inboundBytes: 55},
-      ];
       usageMetrics.countryUsage = [
         {country: 'EE', inboundBytes: 44},
         {country: 'FF', inboundBytes: 55},
@@ -131,8 +114,6 @@ describe('OutlineSharedMetricsPublisher', () => {
         startUtcMs: startTime,
         endUtcMs: clock.nowMs,
         userReports: [
-          {userId: 'M(user-0)', bytesTransferred: 44},
-          {userId: 'M(user-2)', bytesTransferred: 55},
           {bytesTransferred: 44, countries: ['EE']},
           {bytesTransferred: 55, countries: ['FF']},
         ],
@@ -145,23 +126,16 @@ describe('OutlineSharedMetricsPublisher', () => {
       const startTime = clock.nowMs;
       const serverConfig = new InMemoryConfig<ServerConfigJson>({serverId: 'server-id'});
       const usageMetrics = new ManualUsageMetrics();
-      const toMetricsId = (id: AccessKeyId) => `M(${id})`;
       const metricsCollector = new FakeMetricsCollector();
       const publisher = new OutlineSharedMetricsPublisher(
         clock,
         serverConfig,
         null,
         usageMetrics,
-        toMetricsId,
         metricsCollector
       );
 
       publisher.startSharing();
-      usageMetrics.keyUsage = [
-        {accessKeyId: 'user-0', inboundBytes: 11},
-        {accessKeyId: 'user-1', inboundBytes: 22},
-        {accessKeyId: 'user-0', inboundBytes: 33},
-      ];
       usageMetrics.countryUsage = [
         {country: 'AA', inboundBytes: 11},
         {country: 'SY', inboundBytes: 11},
@@ -177,9 +151,6 @@ describe('OutlineSharedMetricsPublisher', () => {
         startUtcMs: startTime,
         endUtcMs: clock.nowMs,
         userReports: [
-          {userId: 'M(user-0)', bytesTransferred: 11},
-          {userId: 'M(user-1)', bytesTransferred: 22},
-          {userId: 'M(user-0)', bytesTransferred: 33},
           {bytesTransferred: 11, countries: ['AA']},
           {bytesTransferred: 22, countries: ['CC']},
           {bytesTransferred: 33, countries: ['AA']},
@@ -200,7 +171,6 @@ describe('OutlineSharedMetricsPublisher', () => {
     const makeKeyJson = (dataLimit?: DataLimit) => {
       return {
         id: (keyId++).toString(),
-        metricsId: 'id',
         name: 'name',
         password: 'pass',
         port: 12345,
@@ -216,7 +186,6 @@ describe('OutlineSharedMetricsPublisher', () => {
       serverConfig,
       keyConfig,
       new ManualUsageMetrics(),
-      (_id: AccessKeyId) => '',
       metricsCollector
     );
 
@@ -265,7 +234,6 @@ describe('OutlineSharedMetricsPublisher', () => {
       serverConfig,
       new InMemoryConfig<AccessKeyConfigJson>({}),
       new ManualUsageMetrics(),
-      (_id: AccessKeyId) => '',
       metricsCollector
     );
 
@@ -289,19 +257,13 @@ class FakeMetricsCollector implements MetricsCollectorClient {
 }
 
 class ManualUsageMetrics implements UsageMetrics {
-  public keyUsage = [] as KeyUsage[];
   public countryUsage = [] as CountryUsage[];
-  
-  getKeyUsage(): Promise<KeyUsage[]> {
-    return Promise.resolve(this.keyUsage);
-  }
 
   getCountryUsage(): Promise<CountryUsage[]> {
-    return Promise.resolve(this.countryUsage)
+    return Promise.resolve(this.countryUsage);
   }
 
   reset() {
-    this.keyUsage = [] as KeyUsage[];
     this.countryUsage = [] as CountryUsage[];
   }
 }

@@ -17,7 +17,6 @@ import * as follow_redirects from '../infrastructure/follow_redirects';
 import {JsonConfig} from '../infrastructure/json_config';
 import * as logging from '../infrastructure/logging';
 import {PrometheusClient} from '../infrastructure/prometheus_scraper';
-import {AccessKeyId, AccessKeyMetricsId} from '../model/access_key';
 import * as version from './version';
 import {AccessKeyConfigJson} from './server_access_key';
 
@@ -26,12 +25,6 @@ import {ServerConfigJson} from './server_config';
 const MS_PER_HOUR = 60 * 60 * 1000;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
 const SANCTIONED_COUNTRIES = new Set(['CU', 'KP', 'SY']);
-
-// Used internally to track key usage.
-export interface KeyUsage {
-  accessKeyId: string;
-  inboundBytes: number;
-}
 
 export interface CountryUsage {
   country: string;
@@ -50,8 +43,7 @@ export interface HourlyServerMetricsReportJson {
 // JSON format for the published report.
 // Field renames will break backwards-compatibility.
 export interface HourlyUserMetricsReportJson {
-  userId?: string;
-  countries?: string[];
+  countries: string[];
   bytesTransferred: number;
 }
 
@@ -78,7 +70,6 @@ export interface SharedMetricsPublisher {
 }
 
 export interface UsageMetrics {
-  getKeyUsage(): Promise<KeyUsage[]>;
   getCountryUsage(): Promise<CountryUsage[]>;
   reset();
 }
@@ -88,23 +79,6 @@ export class PrometheusUsageMetrics implements UsageMetrics {
   private resetTimeMs: number = Date.now();
 
   constructor(private prometheusClient: PrometheusClient) {}
-
-  async getKeyUsage(): Promise<KeyUsage[]> {
-    const timeDeltaSecs = Math.round((Date.now() - this.resetTimeMs) / 1000);
-    // We measure the traffic to and from the target, since that's what we are protecting.
-    const result = await this.prometheusClient.query(
-      `sum(increase(shadowsocks_data_bytes{dir=~"p>t|p<t"}[${timeDeltaSecs}s])) by (access_key)`
-    );
-    const usage = [] as KeyUsage[];
-    for (const entry of result.result) {
-      const accessKeyId = entry.metric['access_key'] || '';
-      const inboundBytes = Math.round(parseFloat(entry.value[1]));
-      if (inboundBytes > 0) {
-        usage.push({accessKeyId, inboundBytes});
-      }
-    }
-    return usage;
-  }
 
   async getCountryUsage(): Promise<CountryUsage[]> {
     const timeDeltaSecs = Math.round((Date.now() - this.resetTimeMs) / 1000);
@@ -173,14 +147,12 @@ export class OutlineSharedMetricsPublisher implements SharedMetricsPublisher {
   // serverConfig: where the enabled/disable setting is persisted
   // keyConfig: where access keys are persisted
   // usageMetrics: where we get the metrics from
-  // toMetricsId: maps Access key ids to metric ids
   // metricsUrl: where to post the metrics
   constructor(
     private clock: Clock,
     private serverConfig: JsonConfig<ServerConfigJson>,
     private keyConfig: JsonConfig<AccessKeyConfigJson>,
     usageMetrics: UsageMetrics,
-    private toMetricsId: (accessKeyId: AccessKeyId) => AccessKeyMetricsId,
     private metricsCollector: MetricsCollectorClient
   ) {
     // Start timer
@@ -191,9 +163,7 @@ export class OutlineSharedMetricsPublisher implements SharedMetricsPublisher {
         return;
       }
       try {
-        const keyUsagePromise = usageMetrics.getKeyUsage()
-        const countryUsagePromise = usageMetrics.getCountryUsage()
-        await this.reportServerUsageMetrics(await keyUsagePromise, await countryUsagePromise);
+        await this.reportServerUsageMetrics(await usageMetrics.getCountryUsage());
         usageMetrics.reset();
       } catch (err) {
         logging.error(`Failed to report server usage metrics: ${err}`);
@@ -227,26 +197,10 @@ export class OutlineSharedMetricsPublisher implements SharedMetricsPublisher {
     return this.serverConfig.data().metricsEnabled || false;
   }
 
-  private async reportServerUsageMetrics(keyUsageMetrics: KeyUsage[], countryUsageMetrics: CountryUsage[]): Promise<void> {
+  private async reportServerUsageMetrics(countryUsageMetrics: CountryUsage[]): Promise<void> {
     const reportEndTimestampMs = this.clock.now();
 
     const userReports = [] as HourlyUserMetricsReportJson[];
-    // HACK! We use the same backend reporting endpoint for key and country usage.
-    // A row with empty country is for key usage, a row with empty userId is for country usage.
-    // Note that this reports usage twice. If you want the total, filter to rows with non empty countries.
-    for (const keyUsage of keyUsageMetrics) {
-      if (keyUsage.inboundBytes === 0) {
-        continue;
-      }
-      const userId = this.toMetricsId(keyUsage.accessKeyId);
-      if (!userId) {
-        continue;
-      }
-      userReports.push({
-        userId,
-        bytesTransferred: keyUsage.inboundBytes,
-      });
-    }
     for (const countryUsage of countryUsageMetrics) {
       if (countryUsage.inboundBytes === 0) {
         continue;
@@ -254,8 +208,8 @@ export class OutlineSharedMetricsPublisher implements SharedMetricsPublisher {
       if (isSanctionedCountry(countryUsage.country)) {
         continue;
       }
-      // Make sure to always set the country to differentiate the row
-      // from key usage rows.
+      // Make sure to always set a country, which is required by the metrics server validation.
+      // It's used to differentiate the row from the legacy key usage rows.
       const country = countryUsage.country || 'ZZ';
       userReports.push({
         bytesTransferred: countryUsage.inboundBytes,

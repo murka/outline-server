@@ -26,7 +26,6 @@ import * as json_config from '../infrastructure/json_config';
 import * as logging from '../infrastructure/logging';
 import {PrometheusClient, startPrometheus} from '../infrastructure/prometheus_scraper';
 import {RolloutTracker} from '../infrastructure/rollout';
-import {AccessKeyId} from '../model/access_key';
 import * as version from './version';
 
 import {PrometheusManagerMetrics} from './manager_metrics';
@@ -43,7 +42,8 @@ import {
 
 const APP_BASE_DIR = path.join(__dirname, '..');
 const DEFAULT_STATE_DIR = '/root/shadowbox/persisted-state';
-const MMDB_LOCATION = '/var/lib/libmaxminddb/ip-country.mmdb';
+const MMDB_LOCATION_COUNTRY = '/var/lib/libmaxminddb/ip-country.mmdb';
+const MMDB_LOCATION_ASN = '/var/lib/libmaxminddb/ip-asn.mmdb';
 
 async function exportPrometheusMetrics(registry: prometheus.Registry, port): Promise<http.Server> {
   return new Promise<http.Server>((resolve, _) => {
@@ -155,8 +155,14 @@ async function main() {
     verbose,
     ssMetricsLocation
   );
-  if (fs.existsSync(MMDB_LOCATION)) {
-    shadowsocksServer.enableCountryMetrics(MMDB_LOCATION);
+  if (fs.existsSync(MMDB_LOCATION_COUNTRY)) {
+    shadowsocksServer.configureCountryMetrics(MMDB_LOCATION_COUNTRY);
+  }
+  if (fs.existsSync(MMDB_LOCATION_ASN)) {
+    shadowsocksServer.configureAsnMetrics(MMDB_LOCATION_ASN);
+    if (serverConfig.data().experimental?.asnMetricsEnabled) {
+      shadowsocksServer.enableAsnMetrics(true);
+    }
   }
 
   const isReplayProtectionEnabled = createRolloutTracker(serverConfig).isRolloutEnabled(
@@ -209,13 +215,6 @@ async function main() {
   );
 
   const metricsReader = new PrometheusUsageMetrics(prometheusClient);
-  const toMetricsId = (id: AccessKeyId) => {
-    try {
-      return accessKeyRepository.getMetricsId(id);
-    } catch (e) {
-      logging.warn(`Failed to get metrics id for access key ${id}: ${e}`);
-    }
-  };
   const managerMetrics = new PrometheusManagerMetrics(prometheusClient);
   const metricsCollector = new RestMetricsCollectorClient(metricsCollectorUrl);
   const metricsPublisher: SharedMetricsPublisher = new OutlineSharedMetricsPublisher(
@@ -223,13 +222,13 @@ async function main() {
     serverConfig,
     accessKeyConfig,
     metricsReader,
-    toMetricsId,
     metricsCollector
   );
   const managerService = new ShadowsocksManagerService(
     process.env.SB_DEFAULT_SERVER_NAME || 'Outline Server',
     serverConfig,
     accessKeyRepository,
+    shadowsocksServer,
     managerMetrics,
     metricsPublisher
   );
